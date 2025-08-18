@@ -10,10 +10,10 @@ import "fmt"
 // clients.
 type Hub struct {
 	// Registered clients.
-	clients map[*Client]bool
+  clients map[string]map[*Client]bool
 
 	// Inbound messages from the clients.
-	broadcast chan []byte
+	broadcast chan map[string][]byte
 
 	// Register requests from the clients.
 	register chan *Client
@@ -24,10 +24,10 @@ type Hub struct {
 
 func newHub() *Hub {
 	return &Hub{
-		broadcast:  make(chan []byte),
+		broadcast:  make(chan map[string][]byte),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
-		clients:    make(map[*Client]bool),
+		clients:    make(map[string]map[*Client]bool),
 	}
 }
 
@@ -36,22 +36,29 @@ func (h *Hub) run() {
 		select {
 		case client := <-h.register:
       fmt.Println("Registering new client")
-			h.clients[client] = true
+      if _, ok := h.clients[client.sessionKey]; !ok {
+        h.clients[client.sessionKey] = map[*Client]bool{client: true}
+      } else {
+			  h.clients[client.sessionKey][client] = true
+      }
 		case client := <-h.unregister:
-			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
+      fmt.Println("Unregistering client")
+			if _, ok := h.clients[client.sessionKey][client]; ok {
+				delete(h.clients[client.sessionKey], client)
 				close(client.send)
 			}
 		case message := <-h.broadcast:
       fmt.Println("Broadcasting message")
-			for client := range h.clients {
-				select {
-				  case client.send <- message:
-				  default:
-				  	close(client.send)
-				  	delete(h.clients, client)
-				  }
-			}
+      if validRecipients, ok := h.clients[string(message["sessionKey"])]; ok {
+        for client := range validRecipients {
+			  	select {
+			  	  case client.send <- message["message"]:
+			  	  default:
+			  	  	close(client.send)
+			  	  	delete(h.clients[client.sessionKey], client)
+			  	  }
+			  }
+      }
 		}
 	}
 }

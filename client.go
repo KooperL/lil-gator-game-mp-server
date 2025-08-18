@@ -41,6 +41,9 @@ var upgrader = websocket.Upgrader{
 type Client struct {
 	hub *Hub
 
+  // LGGMP session identifier
+  sessionKey string
+
 	// The websocket connection.
 	conn *websocket.Conn
 
@@ -68,9 +71,12 @@ func (c *Client) readPump() {
 				log.Printf("error: %v", err)
 			}
 			break
-		}
+    }
 		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		c.hub.broadcast <- message
+	  c.hub.broadcast <- map[string][]byte{
+      "message": message,
+      "sessionKey": []byte(c.sessionKey),
+    }
 	}
 }
 
@@ -127,7 +133,17 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
-	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256)}
+  queryParams := r.URL.Query();
+  sessionKey, ok := queryParams["sessionKey"]
+  if !ok {
+    http.Error(w, "Bad request", http.StatusBadRequest);
+    return
+  }
+  if len(sessionKey) > 1 {
+    http.Error(w, "Bad request", http.StatusBadRequest);
+    return
+  }
+  client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256), sessionKey: sessionKey[0]}
 	client.hub.register <- client
 
 	// Allow collection of memory referenced by the caller by doing all work in
