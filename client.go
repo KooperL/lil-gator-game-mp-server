@@ -128,11 +128,6 @@ func (c *Client) writePump() {
 
 
 func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println(err)
-		return
-	}
   queryParams := r.URL.Query();
   sessionKey, ok := queryParams["sessionKey"]
   if !ok {
@@ -143,6 +138,11 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
     http.Error(w, "Bad request", http.StatusBadRequest);
     return
   }
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println(err)
+		return
+	}
   client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256), sessionKey: sessionKey[0]}
 	client.hub.register <- client
 

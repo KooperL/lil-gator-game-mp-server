@@ -48,16 +48,17 @@ func (h *Hub) run() {
 				close(client.send)
 			}
 		case message := <-h.broadcast:
-      fmt.Println("Broadcasting message")
-      if validRecipients, ok := h.clients[string(message["sessionKey"])]; ok {
-        for client := range validRecipients {
-			  	select {
-			  	  case client.send <- message["message"]:
-			  	  default:
-			  	  	close(client.send)
-			  	  	delete(h.clients[client.sessionKey], client)
-			  	  }
-			  }
+      if valid := validMessage(message["message"]); valid {
+        if validRecipients, ok := h.clients[string(message["sessionKey"])]; ok {
+          for client := range validRecipients {
+			    	select {
+			    	  case client.send <- message["message"]:
+			    	  default:
+			    	  	close(client.send)
+			    	  	delete(h.clients[client.sessionKey], client)
+			    	  }
+			    }
+        }
       }
 		}
 	}
