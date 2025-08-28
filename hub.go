@@ -49,6 +49,7 @@ func (h *Hub) run() {
 			}
 		case message := <-h.broadcast:
       if valid := validMessage(message["message"]); valid {
+        fmt.Printf("Broadcasting valid message: %s\n", string(message["message"]))
         if validRecipients, ok := h.clients[string(message["sessionKey"])]; ok {
           for client := range validRecipients {
 			    	select {
@@ -59,6 +60,8 @@ func (h *Hub) run() {
 			    	  }
 			    }
         }
+      } else {
+        fmt.Printf("Dropping message: %s\n", string(message["message"]))
       }
 		}
 	}
