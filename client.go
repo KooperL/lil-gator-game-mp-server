@@ -1,16 +1,21 @@
-// Copyright 2013 The Gorilla WebSocket Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 package main
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
+)
+
+type BroadcastKey = string
+
+const (
+	UpdateSessionKey  BroadcastKey = "sessionKey"
+	UpdateMessage     BroadcastKey = "message"
+	UpdateDisplayName BroadcastKey = "displayName"
 )
 
 const (
@@ -41,8 +46,15 @@ var upgrader = websocket.Upgrader{
 type Client struct {
 	hub *Hub
 
-  // LGGMP session identifier
-  sessionKey string
+	// LGGMP session identifier
+	sessionKey sessionKey
+
+	// LGGMP modded .dll version
+	clientVersion string
+
+	// Latest player data message received from this client
+	// Mapping playerData to the client in PlayerClientPool is pretty unnecessary now because of this, but I don't care right now
+	latestPlayerData PlayerData
 
 	// The websocket connection.
 	conn *websocket.Conn
@@ -71,12 +83,19 @@ func (c *Client) readPump() {
 				log.Printf("error: %v", err)
 			}
 			break
-    }
-		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-	  c.hub.broadcast <- map[string][]byte{
-      "message": message,
-      "sessionKey": []byte(c.sessionKey),
-    }
+
+		}
+
+		messageAsBytes := bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
+		messageAsStruct, err := PlayerData{}.fromJSONBytes(messageAsBytes)
+		if err != nil {
+			return
+		}
+		c.latestPlayerData = messageAsStruct
+		if err != nil {
+			return
+		}
+		c.hub.updatePlayerData <- c
 	}
 }
 
@@ -126,24 +145,50 @@ func (c *Client) writePump() {
 	}
 }
 
-
 func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
-  queryParams := r.URL.Query();
-  sessionKey, ok := queryParams["sessionKey"]
-  if !ok {
-    http.Error(w, "Bad request", http.StatusBadRequest);
-    return
-  }
-  if len(sessionKey) > 1 {
-    http.Error(w, "Bad request", http.StatusBadRequest);
-    return
-  }
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println(err)
 		return
 	}
-  client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256), sessionKey: sessionKey[0]}
+
+	queryParams := r.URL.Query()
+	sessionKey, sessionKeyOk := queryParams["sessionKey"]
+	if !sessionKeyOk {
+		fmt.Println("No session key provided")
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+	clientVersion, clientVersionOk := queryParams["clientVersion"]
+	if !clientVersionOk {
+		fmt.Println("No client version provided")
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	if len(sessionKey) > 1 || len(clientVersion) > 1 {
+		fmt.Println("Invalid session key or client version")
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+	if clientVersion[0] != LGGMP_Ver {
+		fmt.Println(fmt.Sprintf("Latest version required. Current version: %s", clientVersion[0]))
+		http.Error(w, fmt.Sprintf("Latest version required. Current version: %s", clientVersion[0]), http.StatusBadRequest)
+		return
+	}
+
+	totalClientsConnected := 0
+	for session := range hub.clientConnectionPool {
+		totalClientsConnected += len(session)
+	}
+
+	if totalClientsConnected >= 100 {
+		fmt.Println("Server is full")
+		http.Error(w, "Server is full", http.StatusBadRequest)
+		return
+	}
+
+	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256), sessionKey: sessionKey[0], clientVersion: clientVersion[0]}
 	client.hub.register <- client
 
 	// Allow collection of memory referenced by the caller by doing all work in
