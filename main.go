@@ -10,7 +10,7 @@ import (
 
 var LGGMP_LISTEN string = ":8000"
 var LGGMP_Ver string = "1.0.0"
-var LGGMP_TICK_RATE int = 60
+var LGGMP_TICK_RATE int = 45
 
 var addr = flag.String("addr", LGGMP_LISTEN, "http service address")
 
@@ -43,6 +43,16 @@ func main() {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r)
+	})
+
+	http.HandleFunc("stats", func(w http.ResponseWriter, r *http.Request) {
+		players := 0
+		sessions := 0
+		for _, clientPool := range hub.clientConnectionPool {
+			players += len(clientPool)
+			sessions++
+		}
+		fmt.Fprintf(w, "Players: %d, Sessions: %d", players, sessions)
 	})
 
 	_ = schedule(func() {

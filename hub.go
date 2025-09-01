@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"maps"
+	"math/rand/v2"
 	"slices"
+	"time"
 )
 
 // Hub maintains the set of active clients and broadcasts messages to the
@@ -38,24 +40,39 @@ func (h *Hub) run() {
 	for {
 		select {
 		case client := <-h.register:
-			fmt.Println("Registering new client")
+			now := time.Now()
 			if _, ok := h.clientConnectionPool[client.sessionKey]; !ok {
 				h.clientConnectionPool[client.sessionKey] = map[*Client]PlayerData{client: PlayerData{}}
 			} else {
 				h.clientConnectionPool[client.sessionKey][client] = PlayerData{}
 			}
+			timeElapsed := time.Since(now)
+			fmt.Printf("Registering client in %v\n", timeElapsed)
 
 		case client := <-h.unregister:
-			fmt.Println("Unregistering client")
+			now := time.Now()
 			if _, ok := h.clientConnectionPool[client.sessionKey][client]; ok {
 				delete(h.clientConnectionPool[client.sessionKey], client)
 				close(client.send)
 			}
+			timeElapsed := time.Since(now)
+			fmt.Printf("Unregistering client in %v\n", timeElapsed)
 
 		case client := <-h.updatePlayerData:
-			h.clientConnectionPool[client.sessionKey][client] = client.latestPlayerData
+			now := time.Now()
+			messageAsStruct, err := PlayerData{}.fromJSONBytes(client.latestPlayerData)
+			if err != nil {
+				return
+			}
+			h.clientConnectionPool[client.sessionKey][client] = messageAsStruct
+			client.lastValidUpdate = time.Now()
+			if rand.IntN(100) < 2 {
+				timeElapsed := time.Since(now)
+				fmt.Printf("RANDOM - Updating player data in %v\n", timeElapsed)
+			}
 
 		case _ = <-h.broadcast:
+			now := time.Now()
 			totalClientsConnected := 0
 
 			for sessionKey, playerClientPool := range h.clientConnectionPool {
@@ -73,11 +90,21 @@ func (h *Hub) run() {
 					continue
 				}
 				for client := range playerClientPool {
+					if client.lastValidUpdate.Before(time.Now().Add(-1 * time.Minute)) {
+						client.hub.unregister <- client
+						continue
+					}
+					if client.connectedAt.Before(time.Now().Add(-30 * time.Minute)) {
+						client.hub.unregister <- client
+						continue
+					}
 					client.send <- payloadAsBytes
-
 				}
 			}
-			// fmt.Printf("Broadcasted to %d sessions with %d total clients.\n", len(h.clientConnectionPool), totalClientsConnected)
+			if rand.IntN(100) < 2 {
+				timeElapsed := time.Since(now)
+				fmt.Printf("RANDOM - Broadcast to %d players in %d sessions took %v\n", totalClientsConnected, len(h.clientConnectionPool), timeElapsed)
+			}
 		}
 	}
 }

@@ -49,12 +49,19 @@ type Client struct {
 	// LGGMP session identifier
 	sessionKey sessionKey
 
+	// LGGMP display name
+	displayName displayName
+
+	connectedAt time.Time
+
+	lastValidUpdate time.Time
+
 	// LGGMP modded .dll version
 	clientVersion string
 
 	// Latest player data message received from this client
 	// Mapping playerData to the client in PlayerClientPool is pretty unnecessary now because of this, but I don't care right now
-	latestPlayerData PlayerData
+	latestPlayerData []byte
 
 	// The websocket connection.
 	conn *websocket.Conn
@@ -85,16 +92,8 @@ func (c *Client) readPump() {
 			break
 
 		}
-
 		messageAsBytes := bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		messageAsStruct, err := PlayerData{}.fromJSONBytes(messageAsBytes)
-		if err != nil {
-			return
-		}
-		c.latestPlayerData = messageAsStruct
-		if err != nil {
-			return
-		}
+		c.latestPlayerData = messageAsBytes
 		c.hub.updatePlayerData <- c
 	}
 }
@@ -165,8 +164,14 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
+	displayName, displayNameOk := queryParams["displayName"]
+	if !displayNameOk {
+		fmt.Println("No display name provided")
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
 
-	if len(sessionKey) > 1 || len(clientVersion) > 1 {
+	if len(sessionKey) > 1 || len(clientVersion) > 1 || len(displayName) > 1 {
 		fmt.Println("Invalid session key or client version")
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
@@ -176,19 +181,34 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Latest version required. Current version: %s", clientVersion[0]), http.StatusBadRequest)
 		return
 	}
+	if displayName[0] == "" {
+		fmt.Println("Invalid display name")
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	for _, session := range hub.clientConnectionPool {
+		for _, client := range session {
+			if client.DisplayName == displayName[0] {
+				fmt.Println("Display name already taken")
+				http.Error(w, "Bad request", http.StatusBadRequest)
+				return
+			}
+		}
+	}
 
 	totalClientsConnected := 0
 	for session := range hub.clientConnectionPool {
 		totalClientsConnected += len(session)
 	}
 
-	if totalClientsConnected >= 100 {
+	if totalClientsConnected >= 20 {
 		fmt.Println("Server is full")
 		http.Error(w, "Server is full", http.StatusBadRequest)
 		return
 	}
 
-	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256), sessionKey: sessionKey[0], clientVersion: clientVersion[0]}
+	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256), sessionKey: sessionKey[0], clientVersion: clientVersion[0], displayName: displayName[0], connectedAt: time.Now(), lastValidUpdate: time.Now()}
 	client.hub.register <- client
 
 	// Allow collection of memory referenced by the caller by doing all work in
